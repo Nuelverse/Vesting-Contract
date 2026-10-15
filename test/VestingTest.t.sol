@@ -74,4 +74,45 @@ contract VestingTest is Test {
         vm.warp(block.timestamp + LongAfterEnd);
         assertEq(vestingContract.calculateVestedAmount(Peter), 1200e18);
     }
+
+    // ----- claimVesting ------- //
+
+    function test_Claim_Halfway_PaysHalf() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 180 days);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+        assertEq(mockERC20.balanceOf(Peter), 600e18);
+        assertEq(mockERC20.balanceOf(address(vestingContract)), 600e18);
+    }
+
+    function test_RevertWhen_ClaimingDuringCliff() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 30 days);
+        vm.expectRevert(VestingContract.NothingToClaim.selector);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+    }
+
+    function test_Claim_TwiceInARow_SecondRevertsWithNothingToClaim() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 180 days);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+        vm.expectRevert(VestingContract.NothingToClaim.selector);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+    }
+
+    function test_Claim_AfterEarlierClaim_PaysOnlyNewlyVested() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 180 days);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+        vm.warp(start + 270 days);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+        assertEq(mockERC20.balanceOf(Peter), 900e18);
+        assertEq(mockERC20.balanceOf(address(vestingContract)), 300e18);
+    }
 }
