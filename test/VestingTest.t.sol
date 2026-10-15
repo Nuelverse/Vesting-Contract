@@ -115,4 +115,88 @@ contract VestingTest is Test {
         assertEq(mockERC20.balanceOf(Peter), 900e18);
         assertEq(mockERC20.balanceOf(address(vestingContract)), 300e18);
     }
+
+    // ----- revokeVesting ------- //
+
+    function test_Revoke_MidSchedule_ReturnsUnvestedToOwner() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 180 days);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+
+        assertEq(mockERC20.balanceOf(Alice), 600e18);
+    }
+
+    function test_Revoke_BeneficiaryCanStillClaimVestedAmount() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 180 days);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+
+        assertEq(mockERC20.balanceOf(Alice), 600e18);
+        assertEq(mockERC20.balanceOf(Peter), 600e18);
+    }
+
+    function test_Revoke_OwnerPlusBeneficiaryEqualsDeposit() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 180 days);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+
+        assertEq(mockERC20.balanceOf(Alice) + mockERC20.balanceOf(Peter), 1200e18);
+        assertEq(mockERC20.balanceOf(address(vestingContract)), 0);
+    }
+
+    function test_Revoke_FreezesVestedAtRevokeTime() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 180 days);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+
+        vm.warp(start + 300 days);
+        assertEq(vestingContract.calculateVestedAmount(Peter), 600e18);
+    }
+
+    function test_Revoke_DuringCliff_ReturnsWholeAllocation() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 30 days);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+
+        assertEq(mockERC20.balanceOf(Alice), 1200e18);
+        assertEq(vestingContract.calculateVestedAmount(Peter), 0);
+    }
+
+    function test_RevertWhen_StrangerRevokes() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 30 days);
+
+        vm.expectRevert(VestingContract.NotOwner.selector);
+        vm.prank(Stranger);
+        vestingContract.revokeVesting(Peter);
+    }
+
+    function test_RevertWhen_RevokingTwice() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 30 days);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+
+        vm.expectRevert(VestingContract.ScheduleAlreadyRevoked.selector);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+    }
+
+    function test_RevertWhen_RevokingFullyVestedSchedule() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 360 days);
+
+        vm.expectRevert(VestingContract.NothingToRevoke.selector);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+    }
 }
