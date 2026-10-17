@@ -3,11 +3,14 @@ pragma solidity 0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {DeployVesting} from "../script/DeployVesting.s.sol";
 import {VestingContract} from "../src/VestingContract.sol";
+import {HelperConfig} from "../script/HelperConfig.s.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 contract VestingTest is Test {
     MockERC20 mockERC20;
-    address Alice; // the contract owner
+    address Alice; // the Default sender
     address Peter; // the beneficiary
     address Stranger; // to test "non-owner can't revoke"
     VestingContract vestingContract;
@@ -15,15 +18,20 @@ contract VestingTest is Test {
     uint256 constant CLIFF = 90 days; // 3 months
     uint256 constant DURATION = 360 days; // 12 months
 
+    event VestingScheduled(
+        address indexed beneficiary, uint256 allocation, uint256 cliffDuration, uint256 totalDuration
+    );
+
     function setUp() public {
-        Alice = makeAddr("ALICE");
+        Alice = DEFAULT_SENDER;
         Peter = makeAddr("PETER");
         Stranger = makeAddr("STRANGER");
-
+        DeployVesting deployVesting = new DeployVesting();
+        (VestingContract vestContract, HelperConfig helperConfig) = deployVesting.run();
         vm.startPrank(Alice);
-        mockERC20 = new MockERC20();
+        mockERC20 = MockERC20(helperConfig.netConfig());
         mockERC20.mint(Alice, ALLOCATION);
-        vestingContract = new VestingContract(address(mockERC20));
+        vestingContract = vestContract;
         mockERC20.approve(address(vestingContract), ALLOCATION);
         vm.stopPrank();
     }
@@ -33,6 +41,12 @@ contract VestingTest is Test {
         vestingContract.setVestingSchedule(Peter, CLIFF, ALLOCATION, DURATION);
         (uint256 start,,,,,) = vestingContract.beneficiarySchedule(Peter);
         return start;
+    }
+
+    //------ Constructor-----//
+    function test_RevertWhen_TokenIsZeroAddress() external {
+        vm.expectRevert(VestingContract.AddressZero.selector);
+        new VestingContract(address(0));
     }
 
     // ----- calculateVestedAmount ------- //
@@ -55,24 +69,30 @@ contract VestingTest is Test {
     }
 
     function test_Vested_Halfway_IsHalf() external {
-        uint256 halfWay = 180 days;
+        uint256 start = 180 days;
         _setSchedule();
-        vm.warp(block.timestamp + halfWay);
+        vm.warp(block.timestamp + start);
         assertEq(vestingContract.calculateVestedAmount(Peter), 600e18);
     }
 
     function test_Vested_ExactlyAtEnd_IsFullAllocation() external {
-        uint256 exactlyAtEnd = 360 days;
+        uint256 start = 360 days;
         _setSchedule();
-        vm.warp(block.timestamp + exactlyAtEnd);
+        vm.warp(block.timestamp + start);
         assertEq(vestingContract.calculateVestedAmount(Peter), 1200e18);
     }
 
     function test_Vested_LongAfterEnd_StaysCappedAtAllocation() external {
-        uint256 LongAfterEnd = 1000 days;
+        uint256 start = 1000 days;
         _setSchedule();
-        vm.warp(block.timestamp + LongAfterEnd);
+        vm.warp(block.timestamp + start);
         assertEq(vestingContract.calculateVestedAmount(Peter), 1200e18);
+    }
+
+    function test_RevertWhen_VestedQueriedForUnknownBeneficiary() external {
+        vm.expectRevert(VestingContract.NoSchedule.selector);
+        vm.prank(Alice);
+        vestingContract.calculateVestedAmount(Stranger);
     }
 
     // ----- claimVesting ------- //
@@ -116,6 +136,12 @@ contract VestingTest is Test {
         assertEq(mockERC20.balanceOf(address(vestingContract)), 300e18);
     }
 
+    function test_RevertWhen_ClaimingWithoutSchedule() external {
+        vm.expectRevert(VestingContract.NoSchedule.selector);
+        vm.prank(Stranger);
+        vestingContract.claimVesting();
+    }
+
     // ----- revokeVesting ------- //
 
     function test_Revoke_MidSchedule_ReturnsUnvestedToOwner() external {
@@ -125,6 +151,12 @@ contract VestingTest is Test {
         vestingContract.revokeVesting(Peter);
 
         assertEq(mockERC20.balanceOf(Alice), 600e18);
+    }
+
+    function test_RevertWhen_RevokingWithoutSchedule() external {
+        vm.expectRevert(VestingContract.NoSchedule.selector);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Stranger);
     }
 
     function test_Revoke_BeneficiaryCanStillClaimVestedAmount() external {
@@ -198,5 +230,88 @@ contract VestingTest is Test {
         vm.expectRevert(VestingContract.NothingToRevoke.selector);
         vm.prank(Alice);
         vestingContract.revokeVesting(Peter);
+    }
+
+    // ----- setVestingSchedule ------- //
+
+    function test_SetSchedule_PullsTokensFromOwner() external {
+        _setSchedule();
+        assertEq(mockERC20.balanceOf(Alice), 0);
+        assertEq(mockERC20.balanceOf(address(vestingContract)), 1200e18);
+    }
+
+    function test_RevertWhen_StrangerSetsSchedule() external {
+        vm.expectRevert(VestingContract.NotOwner.selector);
+        vm.prank(Stranger);
+        vestingContract.setVestingSchedule(Peter, CLIFF, ALLOCATION, DURATION);
+    }
+
+    function test_RevertWhen_ScheduleAlreadyExists() external {
+        _setSchedule();
+        vm.expectRevert(VestingContract.ScheduleAlreadyExists.selector);
+        _setSchedule();
+    }
+
+    function test_RevertWhen_BeneficiaryIsZeroAddress() external {
+        vm.expectRevert(VestingContract.AddressZero.selector);
+        vm.prank(Alice);
+        vestingContract.setVestingSchedule(address(0), CLIFF, ALLOCATION, DURATION);
+    }
+
+    function test_RevertWhen_AllocationIsZero() external {
+        vm.expectRevert(VestingContract.ZeroAllocation.selector);
+        vm.prank(Alice);
+        vestingContract.setVestingSchedule(Peter, CLIFF, 0, DURATION);
+    }
+
+    function test_RevertWhen_DurationIsZero() external {
+        vm.expectRevert(VestingContract.ZeroDuration.selector);
+        vm.prank(Alice);
+        vestingContract.setVestingSchedule(Peter, 0, ALLOCATION, 0);
+    }
+
+    function test_RevertWhen_CliffLongerThanDuration() external {
+        vm.expectRevert(VestingContract.CliffLongerThanDuration.selector);
+        vm.prank(Alice);
+        vestingContract.setVestingSchedule(Peter, 1000 days, ALLOCATION, DURATION);
+    }
+
+    function test_SetSchedule_StoresTheSchedule() external {
+        vm.prank(Alice);
+        vestingContract.setVestingSchedule(Peter, CLIFF, ALLOCATION, DURATION);
+        (
+            uint256 start,
+            uint256 cliff,
+            uint256 allocation,
+            uint256 duration,
+            uint256 claimedAmount,
+            uint256 timeRevoked
+        ) = vestingContract.beneficiarySchedule(Peter);
+        assertEq(start, block.timestamp);
+        assertEq(cliff, CLIFF);
+        assertEq(allocation, ALLOCATION);
+        assertEq(duration, DURATION);
+        assertEq(claimedAmount, 0);
+        assertEq(timeRevoked, 0);
+    }
+
+    function test_SetSchedule_EmitsVestingScheduled() external {
+        vm.expectEmit(true, false, false, true);
+        emit VestingScheduled(Peter, ALLOCATION, CLIFF, DURATION);
+        _setSchedule();
+    }
+
+    function test_RevertWhen_OwnerHasNotApproved() external {
+        vm.startPrank(Alice);
+        mockERC20 = new MockERC20();
+        mockERC20.mint(Alice, ALLOCATION);
+        vestingContract = new VestingContract(address(mockERC20));
+        vm.stopPrank();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientAllowance.selector, address(vestingContract), 0, ALLOCATION
+            )
+        );
+        _setSchedule();
     }
 }

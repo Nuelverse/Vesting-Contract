@@ -125,6 +125,8 @@ forge test
 forge coverage
 ```
 
+**_On Sepolia the script deploys its own mock token (MockERC20) with an unrestricted mint, for demo purposes only_**
+
 Remappings are set in `foundry.toml` for `@openzeppelin/contracts/` and `forge-std/`.
 
 ## Testing
@@ -136,3 +138,4 @@ The test suite is being written. The plan:
 - **Revert cases:** non-owner revoke, duplicate schedule, zero values, nothing to claim, no schedule, double revoke.
 - **Accounting:** after a revoke, owner balance + beneficiary balance equals the original deposit.
 - **Fuzz:** for any timestamp, `claimed <= vested <= totalAllocation`, and the contract never pays out more than the deposit.
+- forge coverage --no-match-coverage "script|test"
