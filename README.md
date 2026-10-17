@@ -2,7 +2,7 @@
 
 A Solidity contract that locks ERC20 tokens for beneficiaries and releases them linearly over time, with an optional cliff. Built with Foundry for learning purpose.
 
-> **Status:** learning-grade implementation, not audited. Contract is written; the test suite is in progress (see [Testing](#testing)).
+> **Status:** learning-grade implementation, not audited. 36 tests (including 3 fuzz tests) pass, with 100% line, branch and function coverage of the contract (see [Testing](#testing)). Deployed and verified on Sepolia (see [Deployments](#deployments)).
 
 ## What it does
 
@@ -117,25 +117,89 @@ The owner can revoke at any time, including one second before the cliff ends, an
 Requirements: [Foundry](https://book.getfoundry.sh/).
 
 ```bash
-git clone <this repo>
+git clone https://github.com/Nuelverse/Vesting-Contract.git
 cd Vesting-Contract
-git submodule update --init --recursive   # forge-std and OpenZeppelin
+forge install
 forge build
 forge test
-forge coverage
 ```
-
-**_On Sepolia the script deploys its own mock token (MockERC20) with an unrestricted mint, for demo purposes only_**
 
 Remappings are set in `foundry.toml` for `@openzeppelin/contracts/` and `forge-std/`.
 
 ## Testing
 
-The test suite is being written. The plan:
+```bash
+forge test                                            # all tests
+forge test --mt testFuzz -vv                          # only the fuzz tests
+forge coverage --no-match-coverage "script|test"      # coverage of src/ only
+```
 
-- **Happy path:** create, claim at the cliff, halfway and at the end.
-- **Time boundaries (`vm.warp`):** before the cliff, exactly at the cliff, exactly at the end, long after the end.
-- **Revert cases:** non-owner revoke, duplicate schedule, zero values, nothing to claim, no schedule, double revoke.
-- **Accounting:** after a revoke, owner balance + beneficiary balance equals the original deposit.
-- **Fuzz:** for any timestamp, `claimed <= vested <= totalAllocation`, and the contract never pays out more than the deposit.
-- forge coverage --no-match-coverage "script|test"
+36 tests, all in `test/VestingTest.t.sol`, grouped by function. Time-based behaviour is tested with `vm.warp`. The tests deploy through the real deploy script (`DeployVesting`), so the deployment path is tested too. A small `MockERC20` (in `test/mocks/`) plays the token.
+
+**Who is who in the tests:** the account that runs the deploy script becomes the owner. Inside tests that is forge's `DEFAULT_SENDER`, which the tests call `Alice`. `Peter` is the beneficiary and `Stranger` is a non-owner.
+
+| Area                 | What is covered                                                                                                                                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Vesting curve        | zero right after creation, one second before the cliff, exactly at the cliff, halfway, exactly at the end, long after the end                                                                                                                                                                                            |
+| `setVestingSchedule` | tokens pulled from the owner, schedule stored, event emitted, and reverts for non-owner, duplicate schedule, zero address, zero allocation, zero duration, cliff longer than duration, and missing approval                                                                                                              |
+| `claimVesting`       | pays half at the halfway point, reverts during the cliff, a second claim in a row reverts, a later claim pays only the newly vested part, reverts with no schedule                                                                                                                                                       |
+| `revokeVesting`      | unvested part returns to the owner, beneficiary can still claim what was earned, vesting stays frozen after the revoke, whole allocation returned during the cliff, owner + beneficiary balances equal the deposit (also after an earlier claim), and reverts for non-owner, double revoke, fully vested and no schedule |
+| Constructor          | reverts on a zero token address                                                                                                                                                                                                                                                                                          |
+
+**Fuzz tests** (256 runs each by default):
+
+- For any moment between creation and 2,000 days later, vested never exceeds the allocation.
+- For any two moments in order, vested never decreases.
+- For any allocation (1 to 1e30), duration (1 second to 8 years) and cliff (0 up to the duration), claiming at the end pays the beneficiary exactly the allocation and leaves 0 in the contract. This also covers rounding: no dust is stuck.
+
+**Coverage of `src/VestingContract.sol`:** 100% of lines, statements, branches and functions.
+
+## Deploying
+
+The deploy script (`script/DeployVesting.s.sol`) asks `HelperConfig` which token to use for the current chain, then deploys `VestingContract` with it. **The account that signs the deployment becomes the owner.**
+
+| Chain                 | Token used                                          |
+| --------------------- | --------------------------------------------------- |
+| Anvil / local (31337) | a `MockERC20` the script deploys                    |
+| Sepolia (11155111)    | a `MockERC20` the script deploys                    |
+| Any other chain       | the script reverts, so it cannot deploy by accident |
+
+**_On Sepolia the script deploys its own mock token (MockERC20) with an unrestricted mint, for demo purposes only._**
+
+**Locally with anvil:**
+
+```bash
+anvil                                    # terminal 1
+forge script script/DeployVesting.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --private-key <one of the keys anvil prints>
+```
+
+Anvil's keys are public test keys with no real value. Never use them anywhere else.
+
+**On a testnet:** import the deployer key into an encrypted keystore once, then deploy with it, so the key never appears in a file or in your shell history. Use a throwaway wallet with test ETH only.
+
+```bash
+cast wallet import sepolia-deployer --interactive
+make deploy-sepolia      # asks for the keystore password
+```
+
+`make deploy-sepolia` reads `SEPOLIA_RPC_URL` and `ETHERSCAN_API_KEY` from a `.env` file (ignored by git) and runs:
+
+```bash
+forge script script/DeployVesting.s.sol:DeployVesting --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer \
+  --broadcast --gas-estimate-multiplier 900 --verify --etherscan-api-key $ETHERSCAN_API_KEY
+```
+
+**Gas note:** when I deployed, creating a contract on Sepolia cost about 7 times more gas than forge's local simulation predicted (a 3,760-byte contract: about 6.0M gas on Sepolia, against about 0.8M locally). With the default estimate the transactions ran out of gas and failed, so the deploy needs the larger `--gas-estimate-multiplier`. You only pay for gas actually used, and at Sepolia prices the whole deployment costs a tiny fraction of an ETH.
+
+**After deploying:** the owner mints some mock tokens to themselves, approves the vesting contract for the allocation, and then calls `setVestingSchedule`.
+
+## Deployments
+
+Deployed on 2026-10-17 to **Sepolia** (chain id 11155111), with source code verified on Etherscan.
+
+| Contract                                      | Address                                                                                                                         |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `VestingContract`                             | [`0x7ab3e05233ff90384b5e09cb74c5f246e25216a9`](https://sepolia.etherscan.io/address/0x7ab3e05233ff90384b5e09cb74c5f246e25216a9) |
+| `MockERC20` (demo token, unrestricted `mint`) | [`0x1942bd09eefc88463c1b4082ec26d93d9a14cb64`](https://sepolia.etherscan.io/address/0x1942bd09eefc88463c1b4082ec26d93d9a14cb64) |
+
+The transaction records are in `broadcast/DeployVesting.s.sol/11155111/`. The token is a mock for demonstration only: anyone can mint it.

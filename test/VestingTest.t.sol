@@ -232,6 +232,23 @@ contract VestingTest is Test {
         vestingContract.revokeVesting(Peter);
     }
 
+    function test_Revoke_AfterEarlierClaim_BalancesStillAddUp() external {
+        uint256 start = _setSchedule();
+        vm.warp(start + 90 days);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+        vm.warp(start + 180 days);
+        vm.prank(Alice);
+        vestingContract.revokeVesting(Peter);
+
+        assertEq(mockERC20.balanceOf(Alice), 600e18);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+
+        assertEq(mockERC20.balanceOf(Alice) + mockERC20.balanceOf(Peter), 1200e18);
+        assertEq(mockERC20.balanceOf(address(vestingContract)), 0);
+    }
+
     // ----- setVestingSchedule ------- //
 
     function test_SetSchedule_PullsTokensFromOwner() external {
@@ -313,5 +330,51 @@ contract VestingTest is Test {
             )
         );
         _setSchedule();
+    }
+
+    // ----- fuzz ------- //
+
+    function testFuzz_Vested_NeverExceedsAllocation(uint256 secondsElapsed) external {
+        uint256 sElapsed = bound(secondsElapsed, 0, 2000 days);
+        uint256 start = _setSchedule();
+        vm.warp(start + sElapsed);
+        assertLe(vestingContract.calculateVestedAmount(Peter), ALLOCATION);
+    }
+
+    function testFuzz_Vested_NeverDecreasesOverTime(uint256 firstDay, uint256 extraDays) external {
+        firstDay = bound(firstDay, 0, 1200 days);
+        extraDays = bound(extraDays, 0, 50 days);
+        uint256 start = _setSchedule();
+        vm.warp(start + firstDay);
+        uint256 vestedBefore = vestingContract.calculateVestedAmount(Peter);
+        vm.warp(block.timestamp + extraDays);
+        uint256 vestedAfter = vestingContract.calculateVestedAmount(Peter);
+
+        assertGe(vestedAfter, vestedBefore);
+    }
+
+    function testFuzz_Claim_AtEnd_PaysFullAllocationAndEmptiesContract(
+        uint256 allocation,
+        uint256 duration,
+        uint256 cliff
+    ) external {
+        duration = bound(duration, 1, 8 * 365 days); // 8 years
+        cliff = bound(cliff, 0, duration);
+        allocation = bound(allocation, 1, 1e30);
+
+        vm.startPrank(Alice);
+        mockERC20.mint(Alice, allocation);
+        mockERC20.approve(address(vestingContract), allocation);
+        vm.stopPrank();
+
+        vm.prank(Alice);
+        vestingContract.setVestingSchedule(Peter, cliff, allocation, duration);
+        (uint256 start,,,,,) = vestingContract.beneficiarySchedule(Peter);
+        vm.warp(start + duration);
+        vm.prank(Peter);
+        vestingContract.claimVesting();
+
+        assertEq(mockERC20.balanceOf(Peter), allocation);
+        assertEq(mockERC20.balanceOf(address(vestingContract)), 0);
     }
 }
