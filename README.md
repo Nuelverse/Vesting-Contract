@@ -1,5 +1,7 @@
 # Timelocked Vesting Contract
 
+[![CI](https://github.com/Nuelverse/Vesting-Contract/actions/workflows/test.yml/badge.svg)](https://github.com/Nuelverse/Vesting-Contract/actions/workflows/test.yml)
+
 A Solidity contract that locks ERC20 tokens for beneficiaries and releases them linearly over time, with an optional cliff. Built with Foundry for learning purpose.
 
 > **Status:** learning-grade implementation, not audited. 39 tests (including 4 fuzz tests) pass, with 100% line, branch and function coverage of the contract (see [Testing](#testing)). Deployed and verified on Sepolia (see [Deployments](#deployments)).
@@ -110,6 +112,7 @@ The owner can revoke at any time, including one second before the cliff ends, an
 - **One schedule per beneficiary**, and a revoked or finished schedule can't be reset.
 - **Single owner**, set at deployment, with no ownership transfer or two-step handover.
 - Beneficiary address cannot be changed (a lost key means locked tokens).
+- Tokens sent to the contract directly (not through `setVestingSchedule`) can never be recovered, since there is no sweep function.
 - Not audited.
 
 ## Running it
@@ -176,12 +179,15 @@ forge script script/DeployVesting.s.sol --rpc-url http://127.0.0.1:8545 --broadc
 
 Anvil's keys are public test keys with no real value. Never use them anywhere else.
 
-**On a testnet:**
+**On a testnet:** import the deployer key into an encrypted keystore once, so the key never appears in a file or in your shell history. Use a throwaway wallet with test ETH only.
 
 ```bash
+cast wallet import sepolia-deployer --interactive   # asks for the key and a password, stores it encrypted
 forge script script/DeployVesting.s.sol:DeployVesting --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer \
-  --broadcast --verify --etherscan-api-key $ETHERSCAN_API_KEY
+  --broadcast --gas-estimate-multiplier 900 --verify --etherscan-api-key $ETHERSCAN_API_KEY
 ```
+
+`SEPOLIA_RPC_URL` and `ETHERSCAN_API_KEY` come from a `.env` file that is ignored by git.
 
 **After deploying:** the owner mints some mock tokens to themselves, approves the vesting contract for the allocation, and then calls `setVestingSchedule`.
 
