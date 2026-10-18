@@ -191,7 +191,7 @@ Deployed on 2026-10-18 to **Sepolia** (chain id 11155111), with source code veri
 
 | Contract                                      | Address                                                                                                                         |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `VestingContract`                             | [`0x7ab3e05233ff90384b5e09cb74c5f246e25216a9`](https://sepolia.etherscan.io/address/0x7ab3e05233ff90384b5e09cb74c5f246e25216a9) |
-| `MockERC20` (demo token, unrestricted `mint`) | [`0x1942bd09eefc88463c1b4082ec26d93d9a14cb64`](https://sepolia.etherscan.io/address/0x1942bd09eefc88463c1b4082ec26d93d9a14cb64) |
+| `VestingContract`                             | [`0xe4a43a0F08D5CC7eF08509CA9De0961B35F770Dc`](https://sepolia.etherscan.io/address/0xe4a43a0F08D5CC7eF08509CA9De0961B35F770Dc) |
+| `MockERC20` (demo token, unrestricted `mint`) | [`0x7b506918DCb537bE0A6E464B3A6841077fe3dAfF`](https://sepolia.etherscan.io/address/0x7b506918DCb537bE0A6E464B3A6841077fe3dAfF) |
 
 The token is a mock for demonstration only: anyone can mint it.
