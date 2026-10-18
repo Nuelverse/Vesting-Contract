@@ -2,7 +2,7 @@
 
 A Solidity contract that locks ERC20 tokens for beneficiaries and releases them linearly over time, with an optional cliff. Built with Foundry for learning purpose.
 
-> **Status:** learning-grade implementation, not audited. 36 tests (including 3 fuzz tests) pass, with 100% line, branch and function coverage of the contract (see [Testing](#testing)). Deployed and verified on Sepolia (see [Deployments](#deployments)).
+> **Status:** learning-grade implementation, not audited. 39 tests (including 4 fuzz tests) pass, with 100% line, branch and function coverage of the contract (see [Testing](#testing)). Deployed and verified on Sepolia (see [Deployments](#deployments)).
 
 ## What it does
 
@@ -134,23 +134,24 @@ forge test --mt testFuzz -vv                          # only the fuzz tests
 forge coverage --no-match-coverage "script|test"      # coverage of src/ only
 ```
 
-36 tests, all in `test/VestingTest.t.sol`, grouped by function. Time-based behaviour is tested with `vm.warp`. The tests deploy through the real deploy script (`DeployVesting`), so the deployment path is tested too. A small `MockERC20` (in `test/mocks/`) plays the token.
+39 tests, all in `test/VestingTest.t.sol`, grouped by function. Time-based behaviour is tested with `vm.warp`. The tests deploy through the real deploy script (`DeployVesting`), so the deployment path is tested too. A small `MockERC20` (in `test/mocks/`) plays the token.
 
 **Who is who in the tests:** the account that runs the deploy script becomes the owner. Inside tests that is forge's `DEFAULT_SENDER`, which the tests call `Alice`. `Peter` is the beneficiary and `Stranger` is a non-owner.
 
-| Area                 | What is covered                                                                                                                                                                                                                                                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Vesting curve        | zero right after creation, one second before the cliff, exactly at the cliff, halfway, exactly at the end, long after the end                                                                                                                                                                                            |
-| `setVestingSchedule` | tokens pulled from the owner, schedule stored, event emitted, and reverts for non-owner, duplicate schedule, zero address, zero allocation, zero duration, cliff longer than duration, and missing approval                                                                                                              |
-| `claimVesting`       | pays half at the halfway point, reverts during the cliff, a second claim in a row reverts, a later claim pays only the newly vested part, reverts with no schedule                                                                                                                                                       |
-| `revokeVesting`      | unvested part returns to the owner, beneficiary can still claim what was earned, vesting stays frozen after the revoke, whole allocation returned during the cliff, owner + beneficiary balances equal the deposit (also after an earlier claim), and reverts for non-owner, double revoke, fully vested and no schedule |
-| Constructor          | reverts on a zero token address                                                                                                                                                                                                                                                                                          |
+| Area                 | What is covered                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vesting curve        | zero right after creation, one second before the cliff, exactly at the cliff, halfway, exactly at the end, long after the end                                                                                                                                                                                                                                                       |
+| `setVestingSchedule` | tokens pulled from the owner, schedule stored, event emitted, and reverts for non-owner, duplicate schedule, zero address, zero allocation, zero duration, cliff longer than duration, and missing approval                                                                                                                                                                         |
+| `claimVesting`       | pays half at the halfway point, reverts during the cliff, a second claim in a row reverts, a later claim pays only the newly vested part, the claim event carries the right beneficiary and amount, reverts with no schedule                                                                                                                                                        |
+| `revokeVesting`      | unvested part returns to the owner, beneficiary can still claim what was earned, vesting stays frozen after the revoke, whole allocation returned during the cliff, owner + beneficiary balances equal the deposit (also after an earlier claim), the revoke event carries the right beneficiary and refund, and reverts for non-owner, double revoke, fully vested and no schedule |
+| Constructor          | reverts on a zero token address                                                                                                                                                                                                                                                                                                                                                     |
 
 **Fuzz tests** (256 runs each by default):
 
 - For any moment between creation and 2,000 days later, vested never exceeds the allocation.
 - For any two moments in order, vested never decreases.
-- For any allocation (1 to 1e30), duration (1 second to 8 years) and cliff (0 up to the duration), claiming at the end pays the beneficiary exactly the allocation and leaves 0 in the contract. This also covers rounding: no dust is stuck.
+- For any allocation (1 to 1e30), duration (1 second to 8 years) and cliff (0 up to the duration), claiming at the end pays the beneficiary exactly the allocation and leaves 0 in the contract. At the end the contract returns the full allocation without dividing, so this checks the end-of-schedule accounting (nothing missing, nothing stuck), not rounding in the middle of a schedule.
+- For any schedule and any revoke moment (including inside the cliff), after the owner revokes and the beneficiary claims what has vested, the owner's and beneficiary's balances add up to exactly what was deposited and the contract holds 0. Because the refund is `total - vested` from the same vested number, rounding can shift a fraction of a token between the two sides but can never create or destroy tokens.
 
 **Coverage of `src/VestingContract.sol`:** 100% of lines, statements, branches and functions.
 
@@ -175,31 +176,22 @@ forge script script/DeployVesting.s.sol --rpc-url http://127.0.0.1:8545 --broadc
 
 Anvil's keys are public test keys with no real value. Never use them anywhere else.
 
-**On a testnet:** import the deployer key into an encrypted keystore once, then deploy with it, so the key never appears in a file or in your shell history. Use a throwaway wallet with test ETH only.
-
-```bash
-cast wallet import sepolia-deployer --interactive
-make deploy-sepolia      # asks for the keystore password
-```
-
-`make deploy-sepolia` reads `SEPOLIA_RPC_URL` and `ETHERSCAN_API_KEY` from a `.env` file (ignored by git) and runs:
+**On a testnet:**
 
 ```bash
 forge script script/DeployVesting.s.sol:DeployVesting --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer \
-  --broadcast --gas-estimate-multiplier 900 --verify --etherscan-api-key $ETHERSCAN_API_KEY
+  --broadcast --verify --etherscan-api-key $ETHERSCAN_API_KEY
 ```
-
-**Gas note:** when I deployed, creating a contract on Sepolia cost about 7 times more gas than forge's local simulation predicted (a 3,760-byte contract: about 6.0M gas on Sepolia, against about 0.8M locally). With the default estimate the transactions ran out of gas and failed, so the deploy needs the larger `--gas-estimate-multiplier`. You only pay for gas actually used, and at Sepolia prices the whole deployment costs a tiny fraction of an ETH.
 
 **After deploying:** the owner mints some mock tokens to themselves, approves the vesting contract for the allocation, and then calls `setVestingSchedule`.
 
 ## Deployments
 
-Deployed on 2026-10-17 to **Sepolia** (chain id 11155111), with source code verified on Etherscan.
+Deployed on 2026-10-18 to **Sepolia** (chain id 11155111), with source code verified on Etherscan.
 
 | Contract                                      | Address                                                                                                                         |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `VestingContract`                             | [`0x7ab3e05233ff90384b5e09cb74c5f246e25216a9`](https://sepolia.etherscan.io/address/0x7ab3e05233ff90384b5e09cb74c5f246e25216a9) |
 | `MockERC20` (demo token, unrestricted `mint`) | [`0x1942bd09eefc88463c1b4082ec26d93d9a14cb64`](https://sepolia.etherscan.io/address/0x1942bd09eefc88463c1b4082ec26d93d9a14cb64) |
 
-The transaction records are in `broadcast/DeployVesting.s.sol/11155111/`. The token is a mock for demonstration only: anyone can mint it.
+The token is a mock for demonstration only: anyone can mint it.

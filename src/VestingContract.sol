@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -16,10 +16,10 @@ contract VestingContract {
     using SafeERC20 for IERC20;
 
     /// @dev The ERC20 token being vested. Set once in the constructor.
-    IERC20 immutable i_token;
+    IERC20 public immutable i_token;
 
     /// @dev The only address allowed to create and revoke schedules. Set once in the constructor.
-    address immutable i_owner;
+    address public immutable i_owner;
 
     /// @notice The vesting schedule of each beneficiary. An unset entry has its values defaulted to 0.
     mapping(address => VestingSchedule) public beneficiarySchedule;
@@ -53,7 +53,7 @@ contract VestingContract {
     /// @notice Emitted when the owner revokes a schedule and reclaims the unvested tokens.
     /// @param beneficiary The address whose schedule was revoked.
     /// @param amountRevoked The unvested tokens returned to the owner.
-    event RevokedVesting(address indexed beneficiary, uint256 amountRevoked);
+    event VestingRevoked(address indexed beneficiary, uint256 amountRevoked);
 
     /// @notice The terms and progress of one beneficiary's vesting.
     /// @param vestingStartTime Timestamp the schedule was created (vesting starts here).
@@ -108,14 +108,14 @@ contract VestingContract {
         if (beneficiary == address(0)) {
             revert AddressZero();
         }
+        if (_totalDuration == 0) {
+            revert ZeroDuration();
+        }
         if (_cliffDuration > _totalDuration) {
             revert CliffLongerThanDuration();
         }
         if (_allocation == 0) {
             revert ZeroAllocation();
-        }
-        if (_totalDuration == 0) {
-            revert ZeroDuration();
         }
 
         beneficiarySchedule[beneficiary] =
@@ -162,7 +162,7 @@ contract VestingContract {
         }
         vSchedule.revokedTime = block.timestamp;
         i_token.safeTransfer(i_owner, revokableAmount);
-        emit RevokedVesting(beneficiary, revokableAmount);
+        emit VestingRevoked(beneficiary, revokableAmount);
     }
 
     /**
